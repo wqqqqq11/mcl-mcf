@@ -14,7 +14,7 @@ wheels/
 /.python-version
 
 datasets/
-/output/
+/outputs
 
 /mosi*
 /pre_trained_models
