@@ -8,6 +8,7 @@ import argparse
 import numpy as np
 
 from utils import *
+from utils.logger import init_logger
 from torch.utils.data import DataLoader
 from solver import Solver
 from config import get_args, get_config, output_dim_dict, criterion_dict
@@ -34,6 +35,9 @@ def set_seed(seed):
 
 
 if __name__ == '__main__':
+    # 初始化日志记录
+    logger = init_logger('outputs/logs')
+    
     args = get_args()
     dataset = str.lower(args.dataset.strip())
 

@@ -13,6 +13,7 @@ from sklearn.metrics import precision_recall_fscore_support
 from sklearn.metrics import accuracy_score, f1_score
 from utils.eval_metrics import *
 from utils.tools import *
+from utils.logger import log_metrics, log_config
 from model import MMIM
 
 
@@ -35,8 +36,6 @@ class Solver(object):
         self.nce3 = hp.nce3
         self.y_true = torch.tensor([])
         self.y_pre = torch.tensor([])
-        self.p_value =[]
-        self.t_statistic = []
 
         self.update_batch = hp.update_batch
 
@@ -119,6 +118,9 @@ class Solver(object):
         best_epoch = 0
         best_results = None
         best_truths = None
+
+        # 记录训练配置
+        log_config(self.hp)
     
         def train(model, optimizer, criterion,epochs, stage=1):
             epoch_loss = 0
@@ -255,6 +257,15 @@ class Solver(object):
                 epoch, duration, val_loss, test_loss))
             print("-"*50)
 
+            # 记录训练指标到日志
+            metrics = {
+                'train_loss': train_loss,
+                'valid_loss': val_loss,
+                'test_loss': test_loss,
+                'duration': duration
+            }
+            log_metrics(metrics, epoch=epoch, phase='train')
+
             if val_loss < best_valid:
                 # update best validation
                 patience = self.hp.patience
@@ -275,16 +286,13 @@ class Solver(object):
 
                     best_results = results
                     best_truths = truths
-                    print(f"Saved model at pre_trained_models/MM.pt!")
+                    print(f"Saved model at outputs/pre_trained_models/best_model.pt!")
                     save_model(self.hp, model)
             else:
                 patience -= 1
                 if patience == 0:
                     break
         
-        torch.save(self.p_value,"mosi_mcl_mcf_p_value.pth")
-        torch.save(self.t_statistic,"mosi_mcl_mcf_t_statistic.pth")
-
         print(f'Best epoch: {best_epoch}')
         if self.hp.dataset in ["mosei_senti", "mosei"]:
             eval_mosei_senti(best_results, best_truths, True)

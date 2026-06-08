@@ -15,15 +15,17 @@ def save_load_name(args, name=''):
 def save_model(args, model, name=''):
     # name = save_load_name(args, name)
     name = 'best_model'
-    if not os.path.exists('pre_trained_models'):
-        os.mkdir('pre_trained_models')
-    torch.save(model.state_dict(), f'pre_trained_models/{name}.pt')
+    save_dir = 'outputs/pre_trained_models'
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir, exist_ok=True)
+    torch.save(model.state_dict(), f'{save_dir}/{name}.pt')
 
 
 def load_model(args, name=''):
     # name = save_load_name(args, name)
     name = 'best_model'
-    with open(f'pre_trained_models/{name}.pt', 'rb') as f:
+    save_dir = 'outputs/pre_trained_models'
+    with open(f'{save_dir}/{name}.pt', 'rb') as f:
         buffer = io.BytesIO(f.read())
     model = torch.load(buffer)
     return model
