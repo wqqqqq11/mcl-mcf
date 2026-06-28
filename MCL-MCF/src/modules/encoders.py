@@ -246,28 +246,71 @@ class MMILB(nn.Module):
 class Clip(nn.Module):
     def __init__(self, x_size, y_size):
         super().__init__()
-
         self.x_learn_weight = nn.Linear(x_size, 128)
         self.y_learn_weight = nn.Linear(y_size, 128)
 
-    def forward(self, x, y):  # 32,768  32,64
-        x = self.x_learn_weight(x)  # 32,128
+    def forward(self, x, y, target=None):
+        # projection
+        x = self.x_learn_weight(x)
         y = self.y_learn_weight(y)
 
         eps = 1e-8
-        x_norm = x.norm(dim=1, keepdim=True) 
+
+        # normalization
+        x_norm = x.norm(dim=1, keepdim=True)
         y_norm = y.norm(dim=1, keepdim=True)
         x = x / (x_norm + eps)
         y = y / (y_norm + eps)
 
-        logit_scale = torch.ones([]) * np.log(1 / 0.07)
-        logits = logit_scale * torch.mm(x, y.T)
-         # 添加数值裁剪防止溢出
+        # similarity logits, same as original Clip
+        logit_scale = torch.ones([]).to(x.device) * np.log(1 / 0.07)
+        sim = torch.mm(x, y.T)
+        logits = logit_scale * sim
         logits = torch.clamp(logits, min=-88, max=88)
-        
+
+        # original hard CLIP loss when target is not provided
         labels = torch.arange(x.shape[0]).to(x.device)
-        loss_i = F.cross_entropy(logits, labels)
-        loss_t = F.cross_entropy(logits.T, labels)
+        if target is None:
+            loss_i = F.cross_entropy(logits, labels)
+            loss_t = F.cross_entropy(logits.T, labels)
+            return (loss_i + loss_t) / 2.
+
+        # Step 1: label-distance and hard-negative weighted InfoNCE
+        target = target.detach().view(-1).float()
+
+        # fixed internal constants: no new parser args, no new model parameters
+        sigma = 1.0
+        hard_gamma = 1.0
+        neg_min = 0.05
+
+        batch_size = x.shape[0]
+        eye = torch.eye(batch_size).bool().to(x.device)
+
+        # label topology weight:
+        # label-close samples get smaller negative weights
+        label_dist = torch.abs(target.unsqueeze(1) - target.unsqueeze(0))
+        label_weight = 1.0 - torch.exp(-label_dist / sigma)
+
+        # hard negative weight:
+        # representation-similar negatives are pushed slightly harder
+        hard_weight = 1.0 + hard_gamma * ((sim.detach() + 1.0) / 2.0).clamp(0.0, 1.0)
+
+        neg_weight = label_weight * hard_weight
+        neg_weight = neg_weight.clamp(min=neg_min, max=1.0 + hard_gamma)
+        neg_weight = neg_weight.masked_fill(eye, 0.0)
+
+        def weighted_ce(input_logits, input_weight):
+            input_logits = input_logits - input_logits.max(dim=1, keepdim=True)[0].detach()
+            exp_logits = torch.exp(input_logits)
+
+            pos = torch.diag(exp_logits)
+            neg = (exp_logits * input_weight).sum(dim=1)
+
+            loss = -torch.log((pos + eps) / (pos + neg + eps))
+            return loss.mean()
+
+        loss_i = weighted_ce(logits, neg_weight)
+        loss_t = weighted_ce(logits.T, neg_weight.T)
 
         return (loss_i + loss_t) / 2.
 

@@ -189,9 +189,9 @@ class MMIM(nn.Module):
 
         fusion, preds = self.fusion_prj(res_mm)  # 32, 512, 1
 
-        clip_ta = self.ta_clip(text, acoustic)
-        clip_tv = self.tv_clip(text, visual)
-        clip_av = self.av_clip(visual, acoustic)
+        clip_ta = self.ta_clip(text, acoustic, y)
+        clip_tv = self.tv_clip(text, visual, y)
+        clip_av = self.av_clip(visual, acoustic, y)
 
         clip_mass_t = self.mass_t_clip(text, massagehub_va)
         clip_mass_v = self.mass_v_clip(visual, massagehub_ta)
