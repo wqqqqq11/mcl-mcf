@@ -275,29 +275,33 @@ class Clip(nn.Module):
             loss_t = F.cross_entropy(logits.T, labels)
             return (loss_i + loss_t) / 2.
 
-        # Step 1: label-distance and hard-negative weighted InfoNCE
         target = target.detach().view(-1).float()
-
-        # fixed internal constants: no new parser args, no new model parameters
-        sigma = 1.0
-        hard_gamma = 1.0
-        neg_min = 0.05
 
         batch_size = x.shape[0]
         eye = torch.eye(batch_size).bool().to(x.device)
 
-        # label topology weight:
-        # label-close samples get smaller negative weights
+        # label distance
         label_dist = torch.abs(target.unsqueeze(1) - target.unsqueeze(0))
-        label_weight = 1.0 - torch.exp(-label_dist / sigma)
 
-        # hard negative weight:
-        # representation-similar negatives are pushed slightly harder
-        hard_weight = 1.0 + hard_gamma * ((sim.detach() + 1.0) / 2.0).clamp(0.0, 1.0)
+        # remove diagonal before normalization
+        label_dist = label_dist.masked_fill(eye, 0.0)
 
-        neg_weight = label_weight * hard_weight
-        neg_weight = neg_weight.clamp(min=neg_min, max=1.0 + hard_gamma)
-        neg_weight = neg_weight.masked_fill(eye, 0.0)
+        # use batch-adaptive distance normalization
+        # no new hyper-parameter
+        row_mean = label_dist.sum(dim=1, keepdim=True) / max(batch_size - 1, 1)
+        label_weight = label_dist / (row_mean + eps)
+
+        # conservative reweighting:
+        # near-label negatives are only mildly down-weighted
+        # far-label negatives are only mildly up-weighted
+        label_weight = label_weight.clamp(min=0.5, max=1.5)
+
+        # diagonal should not be used as negative
+        label_weight = label_weight.masked_fill(eye, 0.0)
+
+        # preserve original negative mass:
+        # each row still has total negative strength close to batch_size - 1
+        label_weight = label_weight * ((batch_size - 1) / (label_weight.sum(dim=1, keepdim=True) + eps))
 
         def weighted_ce(input_logits, input_weight):
             input_logits = input_logits - input_logits.max(dim=1, keepdim=True)[0].detach()
@@ -309,8 +313,18 @@ class Clip(nn.Module):
             loss = -torch.log((pos + eps) / (pos + neg + eps))
             return loss.mean()
 
-        loss_i = weighted_ce(logits, neg_weight)
-        loss_t = weighted_ce(logits.T, neg_weight.T)
+        # original CE loss as baseline
+        loss_i_ce = F.cross_entropy(logits, labels)
+        loss_t_ce = F.cross_entropy(logits.T, labels)
+
+        # label topology weighted loss
+        loss_i_w = weighted_ce(logits, label_weight)
+        loss_t_w = weighted_ce(logits.T, label_weight.T)
+
+        # mix: lambda_soft weighted average
+        lambda_soft = 0.3
+        loss_i = (1.0 - lambda_soft) * loss_i_ce + lambda_soft * loss_i_w
+        loss_t = (1.0 - lambda_soft) * loss_t_ce + lambda_soft * loss_t_w
 
         return (loss_i + loss_t) / 2.
 
